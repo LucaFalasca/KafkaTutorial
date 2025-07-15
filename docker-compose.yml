@@ -1,0 +1,61 @@
+services:
+    kafka_broker:
+      container_name: kafka_broker
+      image: bitnami/kafka:latest
+      environment:
+        # --- Configurazione del ruolo e del cluster ---
+        - KAFKA_CFG_NODE_ID=0
+        - KAFKA_CLUSTER_ID=cluster-id
+        - KAFKA_CFG_PROCESS_ROLES=controller,broker 
+
+        # --- Configurazione dei listener ---
+        - KAFKA_CFG_LISTENERS=CLIENT://:9092,EXTERNAL://:9093,CONTROLLER://:9094 
+        - KAFKA_CFG_ADVERTISED_LISTENERS=CLIENT://kafka_broker:9092,EXTERNAL://kafka_broker:9093
+        - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=CLIENT:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT 
+        - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=CLIENT
+
+        # --- Configurazione specifica del controller KRaft ---
+        - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka_broker:9094 
+        - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER       
+
+        # --- Varie ---
+        - ALLOW_PLAINTEXT_LISTENER=yes
+        - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=true
+      volumes:
+        - ./KafkaData:/bitnami/kafka
+        - ./init-kafka.sh:/init-kafka.sh
+      ports:
+        - "9092:9092"
+        - "9093:9093"
+      healthcheck:
+        test: ["CMD", "kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
+        interval: 30s
+        timeout: 10s
+        retries: 5
+      command: > # Lancio uno script che crea il topic
+        bash -c "
+          /opt/bitnami/scripts/kafka/entrypoint.sh /opt/bitnami/scripts/kafka/run.sh &
+          pid=$!;
+          sleep 10;
+          chmod +x /init-kafka.sh;
+          /init-kafka.sh;
+          wait $pid
+        "
+
+    kafka_producer:
+      build: ./KafkaProducer
+      depends_on:
+        kafka_broker:
+          condition: service_healthy
+        kafka_consumer:
+          condition: service_started
+      command: >
+        bash -c "sleep 3 && exec python -u producer.py"
+
+    kafka_consumer:
+      build: ./KafkaConsumer
+      depends_on:
+        kafka_broker:
+          condition: service_healthy
+      command: >
+        bash -c "sleep 3 && exec python -u consumer.py"
